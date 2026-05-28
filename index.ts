@@ -131,6 +131,33 @@ log(
   ),
 );
 
+/**
+* Checks if the current module is the main module (the entry point of the application).
+* This function works for both ES Modules (ESM) and CommonJS.
+* @returns {boolean} - True if the module is the main module, false otherwise.
+*/
+const isMainModule = () => {
+  // 1. Standard check for CommonJS
+  // `require.main` refers to the application's entry point module.
+  // If it's the same as the current `module`, this file was executed directly.
+  if (typeof require !== 'undefined' && require.main === module) {
+    return true;
+  }
+  // 2. Check for ES Modules (ESM)
+  // `import.meta.url` provides the file URL of the current module.
+  // `process.argv[1]` provides the path of the executed script.
+  if (typeof import.meta !== 'undefined' && import.meta.url && process.argv[1]) {
+    // Convert the `import.meta.url` (e.g., 'file:///path/to/file.js') to a system-standard absolute path.
+    const currentModulePath = fileURLToPath(import.meta.url);
+    // Resolve `process.argv[1]` (which can be a relative path) to a standard absolute path.
+    const mainScriptPath = realpathSync(process.argv[1]);
+    // Compare the two standardized absolute paths.
+    return currentModulePath === mainScriptPath;
+  }
+  // Fallback if neither of the above conditions are met.
+  return false;
+}
+
 // Initialize database connection at module load time so errors are visible
 // in the logs before the process exits.
 (async () => {
@@ -197,6 +224,117 @@ log(
 
     console.log("Database connection test successful");
     connection.release();
+
+    // Start the server only after the connection test completes successfully
+    if (isMainModule()) {
+      log("info", "Running in standalone mode");
+
+      // Start the server
+      try {
+        const mcpServer = createMcpServer({ config: { debug: false } });
+        if (IS_REMOTE_MCP && REMOTE_SECRET_KEY?.length) {
+          const app = express();
+          app.use(express.json());
+          app.post("/mcp", async (req: Request, res: Response) => {
+            // In stateless mode, create a new instance of transport and server for each request
+            // to ensure complete isolation. A single instance would cause request ID collisions
+            // when multiple clients connect concurrently.
+            if (
+              !req.get("Authorization") ||
+              !req.get("Authorization")?.startsWith("Bearer ") ||
+              !req.get("Authorization")?.endsWith(REMOTE_SECRET_KEY)
+            ) {
+              console.error("Missing or invalid Authorization header");
+              res.status(401).json({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32603,
+                  message: "Missing or invalid Authorization header",
+                },
+                id: null,
+              });
+              return;
+            }
+            try {
+              const server = mcpServer;
+              const transport: StreamableHTTPServerTransport =
+                new StreamableHTTPServerTransport({
+                  sessionIdGenerator: undefined,
+                });
+              res.on("close", () => {
+                log("info", "Request closed");
+                transport.close();
+                server.close();
+              });
+              await server.connect(transport);
+              await transport.handleRequest(req, res, req.body);
+            } catch (error) {
+              log("error", "Error handling MCP request:", error);
+              if (!res.headersSent) {
+                res.status(500).json({
+                  jsonrpc: "2.0",
+                  error: {
+                    code: -32603,
+                    message: (error as any).message,
+                  },
+                  id: null,
+                });
+              }
+            }
+          });
+
+          // SSE notifications not supported in stateless mode
+          app.get("/mcp", async (req: Request, res: Response) => {
+            console.log("Received GET MCP request");
+            res.writeHead(405).end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32000,
+                  message: "Method not allowed.",
+                },
+                id: null,
+              }),
+            );
+          });
+
+          // Session termination not needed in stateless mode
+          app.delete("/mcp", async (req: Request, res: Response) => {
+            console.log("Received DELETE MCP request");
+            res.writeHead(405).end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32000,
+                  message: "Method not allowed.",
+                },
+                id: null,
+              }),
+            );
+          });
+
+          // Start the server
+          app.listen(Number(PORT), '0.0.0.0', (error) => {
+            if (error) {
+              console.error("Failed to start server:", error);
+              process.exit(1);
+            }
+            console.log(
+              `MCP Stateless Streamable HTTP Server listening on port ${PORT}`,
+            );
+          });
+        } else {
+          const transport = new StdioServerTransport();
+          // Create a server instance directly instead of importing
+
+          await mcpServer.connect(transport);
+          log("info", "Server started and listening on stdio");
+        }
+      } catch (error) {
+        log("error", "Server error:", error);
+        safeExit(1);
+      }
+    }
   } catch (error) {
     // --- Detailed error diagnostics ---
     const err = error as Record<string, unknown>;
@@ -499,142 +637,3 @@ export default function createMcpServer({
   return server;
 }
 
-/**
-* Checks if the current module is the main module (the entry point of the application).
-* This function works for both ES Modules (ESM) and CommonJS.
-* @returns {boolean} - True if the module is the main module, false otherwise.
-*/
-const isMainModule = () => {
-  // 1. Standard check for CommonJS
-  // `require.main` refers to the application's entry point module.
-  // If it's the same as the current `module`, this file was executed directly.
-  if (typeof require !== 'undefined' && require.main === module) {
-    return true;
-  }
-  // 2. Check for ES Modules (ESM)
-  // `import.meta.url` provides the file URL of the current module.
-  // `process.argv[1]` provides the path of the executed script.
-  if (typeof import.meta !== 'undefined' && import.meta.url && process.argv[1]) {
-    // Convert the `import.meta.url` (e.g., 'file:///path/to/file.js') to a system-standard absolute path.
-    const currentModulePath = fileURLToPath(import.meta.url);
-    // Resolve `process.argv[1]` (which can be a relative path) to a standard absolute path.
-    const mainScriptPath = realpathSync(process.argv[1]);
-    // Compare the two standardized absolute paths.
-    return currentModulePath === mainScriptPath;
-  }
-  // Fallback if neither of the above conditions are met.
-  return false;
-}
-
-// Start the server if this file is being run directly
-if (isMainModule()) {
-  log("info", "Running in standalone mode");
-
-  // Start the server
-  (async () => {
-    try {
-      const mcpServer = createMcpServer({ config: { debug: false } });
-      if (IS_REMOTE_MCP && REMOTE_SECRET_KEY?.length) {
-        const app = express();
-        app.use(express.json());
-        app.post("/mcp", async (req: Request, res: Response) => {
-          // In stateless mode, create a new instance of transport and server for each request
-          // to ensure complete isolation. A single instance would cause request ID collisions
-          // when multiple clients connect concurrently.
-          if (
-            !req.get("Authorization") ||
-            !req.get("Authorization")?.startsWith("Bearer ") ||
-            !req.get("Authorization")?.endsWith(REMOTE_SECRET_KEY)
-          ) {
-            console.error("Missing or invalid Authorization header");
-            res.status(401).json({
-              jsonrpc: "2.0",
-              error: {
-                code: -32603,
-                message: "Missing or invalid Authorization header",
-              },
-              id: null,
-            });
-            return;
-          }
-          try {
-            const server = mcpServer;
-            const transport: StreamableHTTPServerTransport =
-              new StreamableHTTPServerTransport({
-                sessionIdGenerator: undefined,
-              });
-            res.on("close", () => {
-              log("info", "Request closed");
-              transport.close();
-              server.close();
-            });
-            await server.connect(transport);
-            await transport.handleRequest(req, res, req.body);
-          } catch (error) {
-            log("error", "Error handling MCP request:", error);
-            if (!res.headersSent) {
-              res.status(500).json({
-                jsonrpc: "2.0",
-                error: {
-                  code: -32603,
-                  message: (error as any).message,
-                },
-                id: null,
-              });
-            }
-          }
-        });
-
-        // SSE notifications not supported in stateless mode
-        app.get("/mcp", async (req: Request, res: Response) => {
-          console.log("Received GET MCP request");
-          res.writeHead(405).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "Method not allowed.",
-              },
-              id: null,
-            }),
-          );
-        });
-
-        // Session termination not needed in stateless mode
-        app.delete("/mcp", async (req: Request, res: Response) => {
-          console.log("Received DELETE MCP request");
-          res.writeHead(405).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "Method not allowed.",
-              },
-              id: null,
-            }),
-          );
-        });
-
-        // Start the server
-        app.listen(Number(PORT), '0.0.0.0', (error) => {
-          if (error) {
-            console.error("Failed to start server:", error);
-            process.exit(1);
-          }
-          console.log(
-            `MCP Stateless Streamable HTTP Server listening on port ${PORT}`,
-          );
-        });
-      } else {
-        const transport = new StdioServerTransport();
-        // Create a server instance directly instead of importing
-
-        await mcpServer.connect(transport);
-        log("info", "Server started and listening on stdio");
-      }
-    } catch (error) {
-      log("error", "Server error:", error);
-      safeExit(1);
-    }
-  })();
-}
