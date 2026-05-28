@@ -22,6 +22,7 @@ import {
   SCHEMA_INSERT_PERMISSIONS,
   SCHEMA_UPDATE_PERMISSIONS,
   isMultiDbMode,
+  mcpConfig,
   mcpConfig as config,
   MCP_VERSION as version,
   IS_REMOTE_MCP,
@@ -136,7 +137,7 @@ log(
   const CONNECTION_TEST_TIMEOUT_MS = 10000;
 
   // Log the connection config being used (mask password)
-  const connCfg = config.mysql as Record<string, unknown>;
+  const connCfg = mcpConfig.mysql as Record<string, unknown>;
   log(
     "info",
     "Connection config for startup test:",
