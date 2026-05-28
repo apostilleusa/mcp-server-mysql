@@ -314,15 +314,14 @@ const isMainModule = () => {
           });
 
           // Start the server
-          app.listen(Number(PORT), '0.0.0.0', (error) => {
-            if (error) {
-              console.error("Failed to start server:", error);
-              process.exit(1);
-            }
-            console.log(
-              `MCP Stateless Streamable HTTP Server listening on port ${PORT}`,
-            );
+          await new Promise((resolve, reject) => {
+            app.listen(Number(PORT), '0.0.0.0', (error) => {
+              if (error) reject(error); else resolve(undefined);
+            });
           });
+          console.log(
+            `MCP Stateless Streamable HTTP Server listening on port ${PORT}`,
+          );
         } else {
           const transport = new StdioServerTransport();
           // Create a server instance directly instead of importing
