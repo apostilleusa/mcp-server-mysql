@@ -344,6 +344,22 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
   }
 }
 
+// @INFO: Test MySQL connection immediately when module loads
+(async () => {
+  let connection;
+  try {
+    const pool = await getPool();
+    connection = await pool.getConnection();
+    log("info", "MySQL connection test successful");
+  } catch (error) {
+    log("error", "MySQL connection test failed:", error);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+})();
+
 export {
   isTestEnvironment,
   safeExit,
