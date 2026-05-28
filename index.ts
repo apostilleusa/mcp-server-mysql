@@ -138,8 +138,7 @@ log(
 
   // Log the connection config being used (mask password)
   const connCfg = mcpConfig.mysql as Record<string, unknown>;
-  log(
-    "info",
+  console.log(
     "Connection config for startup test:",
     JSON.stringify(
       {
@@ -169,7 +168,7 @@ log(
   );
 
   try {
-    log("info", "Attempting to test database connection...");
+    console.log("Attempting to test database connection...");
 
     // Race the connection attempt against a hard timeout so we always get
     // a log line even if mysql2 hangs without throwing.
@@ -196,17 +195,16 @@ log(
       timeoutPromise,
     ]);
 
-    log("info", "Database connection test successful");
+    console.log("Database connection test successful");
     connection.release();
   } catch (error) {
     // --- Detailed error diagnostics ---
     const err = error as Record<string, unknown>;
 
-    log("error", "=== FATAL: Database connection test failed ===");
+    console.error("=== FATAL: Database connection test failed ===");
 
     // 1. Full error object with all mysql2 / Node.js properties
-    log(
-      "error",
+    console.error(
       "Error details:",
       JSON.stringify(
         {
@@ -224,16 +222,15 @@ log(
     );
 
     // 2. Stack trace
-    log(
-      "error",
+    console.error(
       "Stack trace:",
       (error instanceof Error && error.stack) ? error.stack : "(no stack available)",
     );
 
     // 3. Raw error (catches any properties not covered above)
-    log("error", "Raw error object:", error);
+    console.error("Raw error object:", error);
 
-    log("error", "=== End of connection error diagnostics ===");
+    console.error("=== End of connection error diagnostics ===");
 
     safeExit(1);
   }
