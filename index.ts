@@ -346,15 +346,107 @@ export default function createMcpServer({
 
   // Initialize database connection and set up shutdown handlers
   (async () => {
+    const CONNECTION_TEST_TIMEOUT_MS = 10000;
+
+    // Log the connection config being used (mask password)
+    const connCfg = config.mysql as Record<string, unknown>;
+    log(
+      "info",
+      "Connection config for startup test:",
+      JSON.stringify(
+        {
+          ...(connCfg.socketPath
+            ? { socketPath: connCfg.socketPath, connectionType: "Unix Socket" }
+            : {
+                host: connCfg.host,
+                port: connCfg.port,
+                connectionType: "TCP/IP",
+              }),
+          user: connCfg.user,
+          password: connCfg.password ? "******" : "not set",
+          database: connCfg.database || "(none / multi-DB mode)",
+          connectTimeout: connCfg.connectTimeout,
+          ssl: connCfg.ssl
+            ? {
+                rejectUnauthorized: (connCfg.ssl as Record<string, unknown>).rejectUnauthorized,
+                hasCA: !!(connCfg.ssl as Record<string, unknown>).ca,
+                hasCert: !!(connCfg.ssl as Record<string, unknown>).cert,
+                hasKey: !!(connCfg.ssl as Record<string, unknown>).key,
+              }
+            : "disabled",
+        },
+        null,
+        2,
+      ),
+    );
+
     try {
       log("info", "Attempting to test database connection...");
-      // Test the connection before fully starting the server
-      const pool = await getPool();
-      const connection = await pool.getConnection();
+
+      // Race the connection attempt against a hard timeout so we always get
+      // a log line even if mysql2 hangs without throwing.
+      const connectionTestPromise = (async () => {
+        const pool = await getPool();
+        const connection = await pool.getConnection();
+        return connection;
+      })();
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Connection test timed out after ${CONNECTION_TEST_TIMEOUT_MS}ms`,
+              ),
+            ),
+          CONNECTION_TEST_TIMEOUT_MS,
+        ),
+      );
+
+      const connection = await Promise.race([
+        connectionTestPromise,
+        timeoutPromise,
+      ]);
+
       log("info", "Database connection test successful");
       connection.release();
     } catch (error) {
-      log("error", "Fatal error during server startup:", error);
+      // --- Detailed error diagnostics ---
+      const err = error as Record<string, unknown>;
+
+      log("error", "=== FATAL: Database connection test failed ===");
+
+      // 1. Full error object with all mysql2 / Node.js properties
+      log(
+        "error",
+        "Error details:",
+        JSON.stringify(
+          {
+            message: err.message,
+            code: err.code,
+            errno: err.errno,
+            sqlState: err.sqlState,
+            sqlMessage: err.sqlMessage,
+            fatal: err.fatal,
+            name: (error as Error).name,
+          },
+          null,
+          2,
+        ),
+      );
+
+      // 2. Stack trace
+      log(
+        "error",
+        "Stack trace:",
+        (error instanceof Error && error.stack) ? error.stack : "(no stack available)",
+      );
+
+      // 3. Raw error (catches any properties not covered above)
+      log("error", "Raw error object:", error);
+
+      log("error", "=== End of connection error diagnostics ===");
+
       safeExit(1);
     }
   })();
