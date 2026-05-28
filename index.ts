@@ -525,7 +525,7 @@ if (isMainModule()) {
         });
 
         // Start the server
-        app.listen(PORT, '0.0.0.0', (error) => {
+        app.listen(Number(PORT), '0.0.0.0', (error) => {
           if (error) {
             console.error("Failed to start server:", error);
             process.exit(1);
