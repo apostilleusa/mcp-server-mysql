@@ -23,6 +23,7 @@ import {
   SCHEMA_UPDATE_PERMISSIONS,
   isMultiDbMode,
   mcpConfig as config,
+  mcpConfig,
   MCP_VERSION as version,
   IS_REMOTE_MCP,
   REMOTE_SECRET_KEY,
@@ -349,7 +350,7 @@ export default function createMcpServer({
     const CONNECTION_TEST_TIMEOUT_MS = 10000;
 
     // Log the connection config being used (mask password)
-    const connCfg = config.mysql as Record<string, unknown>;
+    const connCfg = mcpConfig.mysql as Record<string, unknown>;
     log(
       "info",
       "Connection config for startup test:",
